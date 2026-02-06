@@ -1,1 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Negative Priming Experiment</title>
+
+  <!-- Tailwind via CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: #111827;
+      color: #f3f4f6;
+      margin: 0;
+      overflow: hidden;
+      user-select: none;
+    }
+    canvas {
+      background-color: #111827;
+      display: block;
+      margin: 0 auto;
+    }
+  </style>
+</head>
+<body class="w-screen h-screen flex items-center justify-center">
+  <div id="root" class="w-full h-full flex items-center justify-center">
+    <!-- content injected by JS -->
+  </div>
+
+  <script>
+    // ======== CONFIG / TABLES ========
+
+    const trainingTable = [
+      { label: "red square",    r: 255, g: 0,   b: 0,   correctKeyIndex: 1 },
+      { label: "yellow square", r: 255, g: 255, b: 0,   correctKeyIndex: 4 },
+      { label: "blue square",   r: 30,  g: 144, b: 255, correctKeyIndex: 3 },
+      { label: "green square",  r: 0,   g: 255, b: 0,   correctKeyIndex: 2 },
+    ];
+
+    const neutralTable = [
+      { desc: "red blue",     bitmap: "redblue",     correctKeyIndex: 3 },
+      { desc: "yellow green", bitmap: "yellowgreen", correctKeyIndex: 2 },
+      { desc: "green blue",   bitmap: "greenblue",   correctKeyIndex: 3 },
+      { desc: "red yellow",   bitmap: "redyellow",   correctKeyIndex: 4 },
+      { desc: "blue green",   bitmap: "bluegreen",   correctKeyIndex: 2 },
+      { desc: "yellow red",   bitmap: "yellowred",   correctKeyIndex: 1 },
+      { desc: "yellow blue",  bitmap: "yellowblue",  correctKeyIndex: 3 },
+      { desc: "green red",    bitmap: "greenred",    correctKeyIndex: 1 },
+      { desc: "blue yellow",  bitmap: "blueyellow",  correctKeyIndex: 4 },
+      { desc: "red green",    bitmap: "redgreen",    correctKeyIndex: 2 },
+      { desc: "green yellow", bitmap: "greenyellow", correctKeyIndex: 4 },
+      { desc: "blue red",     bitmap: "bluered",     correctKeyIndex: 1 },
+    ];
+
+    const negativeTable = [
+      { desc: "yellow green", bitmap: "yellowgreen", correctKeyIndex: 2 },
+      { desc: "green yellow", bitmap: "greenyellow", correctKeyIndex: 4 },
+      { desc: "red green",    bitmap: "redgreen",    correctKeyIndex: 2 },
+      { desc: "blue red",     bitmap: "bluered",     correctKeyIndex: 1 },
+      { desc: "yellow blue",  bitmap: "yellowblue",  correctKeyIndex: 3 },
+      { desc: "red yellow",   bitmap: "redyellow",   correctKeyIndex: 4 },
+      { desc: "green red",    bitmap: "greenred",    correctKeyIndex: 1 },
+      { desc: "blue green",   bitmap: "bluegreen",   correctKeyIndex: 2 },
+      { desc: "red blue",     bitmap: "redblue",     correctKeyIndex: 3 },
+      { desc: "yellow red",   bitmap: "yellowred",   correctKeyIndex: 1 },
+      { desc: "blue yellow",  bitmap: "blueyellow",  correctKeyIndex: 4 },
+      { desc: "green blue",   bitmap: "greenblue",   correctKeyIndex: 3 },
+    ];
+
+    const keyOrder = ['r', 'g', 'b', 'y'];
+
+    // ======== GLOBAL STATE ========
+    const root = document.getElementById('root');
+
+    let canvas, ctx;
+    let state = 'WELCOME';
+    let blockNumber = 0;
+    let trialIndex = 0;
+    let trialList = [];
+
+    let currentTrial = null;
+    let awaitingResponse = false;
+    let stimulusOnsetTime = 0;
+
+    // Data rows for CSV: BLOCKNAME,BLOCKNUMBER,TRIAL_LABEL,TABLEROW,KEY,STATUS,RT
+    const dataRows = [];
+
+    // ======== UTILS ========
+    function clearRoot() {
+      root.innerHTML = '';
+    }
+
+    function showCenteredHTML(html) {
+      clearRoot();
+      const div = document.createElement('div');
+      div.className = "text-center max-w-xl mx-auto";
+      div.innerHTML = html;
+      root.appendChild(div);
+    }
+
+    function createCanvas() {
+      clearRoot();
+      canvas = document.createElement('canvas');
+      canvas.width = 800;
+      canvas.height = 600;
+      ctx = canvas.getContext('2d');
+      root.appendChild(canvas);
+    }
+
+    function drawFixation() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "#f3f4f6";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = "32px Inter";
+      ctx.fillText("+", canvas.width / 2, canvas.height / 2);
+    }
+
+    function drawSquare(r, g, b) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const size = 100;
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.fillRect(
+        canvas.width / 2 - size / 2,
+        canvas.height / 2 - size / 2,
+        size,
+        size
+      );
+    }
+
+    function drawWordStimulus(desc) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = "40px Inter";
+      ctx.fillStyle = "#f3f4f6";
+      ctx.fillText(desc.trim(), canvas.width / 2, canvas.height / 2);
+    }
+
+    function drawFeedback(correct) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = "40px Inter";
+      ctx.fillStyle = correct ? "#10b981" : "#ef4444";
+      ctx.fillText(correct ? "Correct!" : "Wrong!", canvas.width / 2, canvas.height / 2);
+    }
+
+    function sleep(ms) {
+      return new Promise(res => setTimeout(res, ms));
+    }
+
+    function computeMeansByBlock() {
+      const correctRows = dataRows.filter(r => r.STATUS === 'CORRECT');
+
+      function meanRT(blockNum) {
+        const rows = correctRows.filter(r => r.BLOCKNUMBER === blockNum);
+        if (rows.length === 0) return NaN;
+        const sum = rows.reduce((acc, r) => acc + r.RT, 0);
+        return Math.round(sum / rows.length);
+      }
+
+      const Training = meanRT(1);
+      const Neutral  = meanRT(2);
+      const Negative = meanRT(3);
+      const Difference = (isNaN(Negative) || isNaN(Neutral)) ? NaN : (Negative - Neutral);
+
+      return { Training, Neutral, Negative, Difference };
+    }
+
+    // ======== CSV DOWNLOAD ========
+
+    function escapeCSV(value) {
+      if (value == null) return '';
+      const str = String(value);
+      if (str.includes('"') || str.includes(',') || str.includes('\n')) {
+        return '"' + str.replace(/"/g, '""') + '"';
+      }
+      return str;
+    }
+
+    function buildCSV() {
+      const header = [
+        "BLOCKNAME",
+        "BLOCKNUMBER",
+        "TRIAL_LABEL",
+        "TABLEROW",
+        "KEY",
+        "STATUS",
+        "RT_ms"
+      ];
+      const lines = [header.join(",")];
+
+      dataRows.forEach(row => {
+        const line = [
+          escapeCSV(row.BLOCKNAME),
+          escapeCSV(row.BLOCKNUMBER),
+          escapeCSV(row.TRIAL_LABEL),
+          escapeCSV(row.TABLEROW),
+          escapeCSV(row.KEY),
+          escapeCSV(row.STATUS),
+          escapeCSV(row.RT)
+        ].join(",");
+        lines.push(line);
+      });
+
+      return lines.join("\n");
+    }
+
+    function downloadCSV() {
+      const csvContent = buildCSV();
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" }); // [web:71][web:78]
+      const url = URL.createObjectURL(blob);                                   // [web:84]
+
+      const a = document.createElement("a");
+      a.href = url;
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      a.download = `negative_priming_${timestamp}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    function showSummaryScreen() {
+      const { Training, Neutral, Negative, Difference } = computeMeansByBlock();
+      showCenteredHTML(`
+        <h1 class="text-2xl font-semibold mb-4">Your speed...</h1>
+        <p class="mb-2">In training block (block 1): <span class="font-semibold">${isNaN(Training) ? 'N/A' : Training + ' ms'}</span></p>
+        <p class="mb-2">In neutral condition (block 2): <span class="font-semibold">${isNaN(Neutral) ? 'N/A' : Neutral + ' ms'}</span></p>
+        <p class="mb-2">In negative priming condition (block 3): <span class="font-semibold">${isNaN(Negative) ? 'N/A' : Negative + ' ms'}</span></p>
+        <p class="mb-4">Difference is: <span class="font-semibold">${isNaN(Difference) ? 'N/A' : Difference + ' ms'}</span></p>
+        <div class="mb-4 flex flex-col items-center gap-2">
+          <button id="download-csv-btn" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded">
+            Download CSV Results
+          </button>
+          <p class="text-sm text-gray-300">Press space key to end (reload the experiment).</p>
+        </div>
+      `);
+      state = 'SUMMARY';
+
+      const btn = document.getElementById('download-csv-btn');
+      if (btn) {
+        btn.addEventListener('click', downloadCSV);
+      }
+    }
+
+    // ======== TRIAL LOGIC ========
+
+    async function runTrainingBlock() {
+      blockNumber = 1;
+      const blockName = 'training';
+
+      trialList = [];
+      for (let i = 0; i < 20; i++) {
+        const rowIndex = Math.floor(Math.random() * trainingTable.length);
+        trialList.push({ ...trainingTable[rowIndex], TABLEROW: rowIndex + 1 });
+      }
+
+      for (trialIndex = 0; trialIndex < trialList.length; trialIndex++) {
+        const t = trialList[trialIndex];
+        currentTrial = {
+          BLOCKNAME: blockName,
+          BLOCKNUMBER: blockNumber,
+          TRIAL_LABEL: t.label,
+          TABLEROW: t.TABLEROW,
+          correctKeyIndex: t.correctKeyIndex,
+          type: 'training'
+        };
+        await runSingleTrainingTrial(t);
+      }
+    }
+
+    async function runSingleTrainingTrial(t) {
+      createCanvas();
+      await sleep(500);
+      drawFixation();
+      await sleep(200);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      await sleep(100);
+      drawSquare(t.r, t.g, t.b);
+
+      awaitingResponse = true;
+      stimulusOnsetTime = performance.now();
+      state = 'AWAIT_RESPONSE';
+
+      const response = await waitForKeyResponse(2000);
+      awaitingResponse = false;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      drawFeedback(response.STATUS === 'CORRECT');
+      await sleep(500);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      dataRows.push({
+        BLOCKNAME: currentTrial.BLOCKNAME,
+        BLOCKNUMBER: currentTrial.BLOCKNUMBER,
+        TRIAL_LABEL: currentTrial.TRIAL_LABEL,
+        TABLEROW: currentTrial.TABLEROW,
+        KEY: response.key,
+        STATUS: response.STATUS,
+        RT: response.RT
+      });
+    }
+
+    async function runNeutralBlock() {
+      blockNumber = 2;
+      const blockName = 'neutral';
+      trialList = neutralTable.map((row, idx) => ({
+        ...row,
+        TABLEROW: idx + 1
+      }));
+
+      for (trialIndex = 0; trialIndex < trialList.length; trialIndex++) {
+        const t = trialList[trialIndex];
+        currentTrial = {
+          BLOCKNAME: blockName,
+          BLOCKNUMBER: blockNumber,
+          TRIAL_LABEL: t.desc,
+          TABLEROW: t.TABLEROW,
+          correctKeyIndex: t.correctKeyIndex,
+          type: 'word'
+        };
+        await runSingleWordTrial(t);
+      }
+    }
+
+    async function runNegativeBlock() {
+      blockNumber = 3;
+      const blockName = 'negative';
+      trialList = negativeTable.map((row, idx) => ({
+        ...row,
+        TABLEROW: idx + 1
+      }));
+
+      for (trialIndex = 0; trialIndex < trialList.length; trialIndex++) {
+        const t = trialList[trialIndex];
+        currentTrial = {
+          BLOCKNAME: blockName,
+          BLOCKNUMBER: blockNumber,
+          TRIAL_LABEL: t.desc,
+          TABLEROW: t.TABLEROW,
+          correctKeyIndex: t.correctKeyIndex,
+          type: 'word'
+        };
+        await runSingleWordTrial(t);
+      }
+    }
+
+    async function runSingleWordTrial(t) {
+      createCanvas();
+      await sleep(500);
+      drawFixation();
+      await sleep(200);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      await sleep(100);
+      drawWordStimulus(t.desc);
+
+      awaitingResponse = true;
+      stimulusOnsetTime = performance.now();
+      state = 'AWAIT_RESPONSE';
+
+      const response = await waitForKeyResponse(2000);
+      awaitingResponse = false;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      drawFeedback(response.STATUS === 'CORRECT');
+      await sleep(500);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      dataRows.push({
+        BLOCKNAME: currentTrial.BLOCKNAME,
+        BLOCKNUMBER: currentTrial.BLOCKNUMBER,
+        TRIAL_LABEL: currentTrial.TRIAL_LABEL,
+        TABLEROW: currentTrial.TABLEROW,
+        KEY: response.key,
+        STATUS: response.STATUS,
+        RT: response.RT
+      });
+    }
+
+    function waitForKeyResponse(timeoutMs) {
+      return new Promise(resolve => {
+        let resolved = false;
+
+        function onKeyDown(e) {
+          if (!awaitingResponse) return;
+          const key = e.key.toLowerCase();
+          const now = performance.now();
+          const rt = Math.round(now - stimulusOnsetTime);
+
+          if (!keyOrder.includes(key)) return;
+
+          awaitingResponse = false;
+          window.removeEventListener('keydown', onKeyDown);
+          if (resolved) return;
+
+          const pressedIndex = keyOrder.indexOf(key) + 1;
+          const correct = (pressedIndex === currentTrial.correctKeyIndex);
+          const STATUS = correct ? 'CORRECT' : 'INCORRECT';
+
+          resolved = true;
+          resolve({ key, RT: rt, STATUS });
+        }
+
+        window.addEventListener('keydown', onKeyDown);
+
+        setTimeout(() => {
+          if (resolved) return;
+          awaitingResponse = false;
+          window.removeEventListener('keydown', onKeyDown);
+          resolved = true;
+          resolve({ key: '', RT: timeoutMs, STATUS: 'TIMEOUT' });
+        }, timeoutMs);
+      });
+    }
+
+    // ======== FLOW / SCREENS ========
+
+    function showWelcome() {
+      showCenteredHTML(`
+        <h1 class="text-2xl font-semibold mb-4">Negative Priming Experiment</h1>
+        <p class="mb-4">
+          In this experiment, you will respond to colors using the keyboard keys:
+        </p>
+        <p class="mb-4">
+          <span class="font-semibold">R</span> = Red,&nbsp;
+          <span class="font-semibold">G</span> = Green,&nbsp;
+          <span class="font-semibold">B</span> = Blue,&nbsp;
+          <span class="font-semibold">Y</span> = Yellow.
+        </p>
+        <p class="mb-4">
+          First you will complete a color training block (block 1), followed by
+          a neutral block (block 2), and a negative priming block (block 3).
+        </p>
+        <p class="mb-4">Press space to begin the training block.</p>
+      `);
+      state = 'WELCOME';
+    }
+
+    function showStartBlock(block) {
+      let title, text;
+      if (block === 1) {
+        title = "Start Block 1 (Training)";
+        text = "You will see colored squares. Respond with R, G, B, or Y according to the color.";
+      } else if (block === 2) {
+        title = "Start Block 2 (Neutral)";
+        text = "You will now see color-word stimuli in the neutral condition. Respond to the ink color.";
+      } else {
+        title = "Start Block 3 (Negative Priming)";
+        text = "You will now see color-word stimuli in the negative priming condition. Respond to the ink color.";
+      }
+
+      showCenteredHTML(`
+        <h1 class="text-2xl font-semibold mb-4">${title}</h1>
+        <p class="mb-4">${text}</p>
+        <p class="mb-4">Press space to start this block.</p>
+      `);
+      state = `READY_BLOCK_${block}`;
+    }
+
+    async function runExperiment() {
+      await runTrainingBlock();
+      showStartBlock(2);
+    }
+
+    async function startNeutralThenNegative() {
+      await runNeutralBlock();
+      showStartBlock(3);
+    }
+
+    async function startNegativeThenSummary() {
+      await runNegativeBlock();
+      showSummaryScreen();
+    }
+
+    // ======== KEY HANDLER FOR FLOW ========
+    window.addEventListener('keydown', async (e) => {
+      const key = e.key.toLowerCase();
+      if (key === ' ' || key === 'spacebar') {
+        if (state === 'WELCOME') {
+          showStartBlock(1);
+        } else if (state === 'READY_BLOCK_1') {
+          runExperiment();
+        } else if (state === 'READY_BLOCK_2') {
+          startNeutralThenNegative();
+        } else if (state === 'READY_BLOCK_3') {
+          startNegativeThenSummary();
+        } else if (state === 'SUMMARY') {
+          location.reload();
+        }
+      }
+    });
+
+    // ======== START ========
+    showWelcome();
+  </script>
+</body>
+</html>
 
